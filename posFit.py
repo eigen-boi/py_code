@@ -10,12 +10,7 @@ import sys
 import math
 from array import array
 
-#outDir = "/SNO+/pdfs/" # for local VM
-outDir = "/home/eigenboi/pdfs/" # for cedar
-outFileName = "zrho_data_TH2D.pdf"
-ECut = 0
-
-
+# ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 def ZRHO_in_AV(file_name):
     """ 
     Description:
@@ -218,9 +213,9 @@ def ZRHO_in_AV(file_name):
     print AVCountEV 
     print filtercuts 
     # =======================================================================
+# ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-
+# ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 def CompareMCValidInvalidFitsECut(input_files, ECut):
     """ 
 
@@ -415,9 +410,9 @@ def CompareMCValidInvalidFitsECut(input_files, ECut):
     print AVCountEV 
     print filtercuts 
     # =======================================================================
+# ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-
+# ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 def CompareMCValidInvalidFits(input_files):
 
     """ 
@@ -602,9 +597,9 @@ def CompareMCValidInvalidFits(input_files):
     print NeckCountEV 
     print filtercuts 
     # =======================================================================
+# ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-
+# ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 def NeckEventPositions(input_files):
     """ 
     Description:
@@ -834,10 +829,10 @@ def NeckEventPositions(input_files):
     print NeckCountEV 
     print filtercuts 
     # =======================================================================
+# ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-
-def PlotDataPosHist(input_files):
+# ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+def PlotDataPosHist(input_files, retriggerfilter, is_mc):
 
     """ 
 
@@ -854,8 +849,6 @@ def PlotDataPosHist(input_files):
     """
 
     fitName = "partialFitter"
-    CountEV = 0
-    just_compare_neck = False
 
     # ======================================================================= for z vs rho
 
@@ -865,10 +858,6 @@ def PlotDataPosHist(input_files):
 
     # ======================================================================= 
 
-    FitBelowCount = 0 # keep track of fitted events below 747.5 mm
-    OutsideEV = 0
-    NeckCountEV = 0
-    outsideradius = 0
     filtercuts = [0, 0, 0, 0] # total fit count, retrigger filtered, posvalid, Evalid
 
     for file_name in input_files :
@@ -881,10 +870,9 @@ def PlotDataPosHist(input_files):
             for iev in range(0, ds.GetEVCount()): # ds is an entry, multiple EV events in one MC event possible so loop through them
 
                 filtercuts[0] += 1
-                if filtercuts[0] < 10000: continue
                 if filtercuts[0] % 1000 == 0: print "Event", filtercuts[0]
 
-                if iev > 0: # retrigger filter
+                if retriggerfilter and iev > 0: # retrigger filter
                     continue
 
                 ev = ds.GetEV(iev) # single EV event
@@ -894,186 +882,27 @@ def PlotDataPosHist(input_files):
                 if not ev.FitResultExists(fitName) or not ev.GetFitResult(fitName).GetVertex(0).ContainsPosition() or not ev.GetFitResult(fitName).GetVertex(0).ValidPosition() :
                     continue # valid position filter
 
+
                 filtercuts[2] += 1 # keep count of valid pos fitted events
 
-                fVertex = ev.GetFitResult(fitName).GetVertex(0)     
+                fVertex = ev.GetFitResult(fitName).GetVertex(0)    
+
+                if not fVertex.ValidEnergy():
+                    continue 
+                if fVertex.GetEnergy() < 0.5 : continue
                     
                 PosEV = fVertex.GetPosition()                  # get position vector 
                 PosEV_Z = PosEV.Z()
                 REV = PosEV.Mag()                              # and radius
                 RhoEV = math.sqrt(PosEV.X()**2 + PosEV.Y()**2)
 
-                if PosEV_Z < 747.5 :
-                    FitBelowCount += 1
-
-                if PosEV_Z > 6000 and RhoEV < 730 :
-                    NeckCountEV += 1
-                
-                if PosEV_Z >= 6000 and RhoEV >= 730 :
-                    OutsideEV += 1
-                if PosEV_Z < 6000 and REV > 6000 :
-                    OutsideEV += 1
-                if REV > 6000 :
-                    outsideradius += 1
+           
+                if REV > 6000 or PosEV_Z < 747.5:
+                    continue
 
                 # plot in hist
                 ZRhoPlotEV.Fill(RhoEV, PosEV_Z)
-            
-            if filtercuts[0] >= 20000: break
-
-
-
-    # =======================================================================
-    
-    canvas1 = ROOT.TCanvas("canvas1") # make canvas
-    canvas1.cd()
-
-    #ZRhoPlotEV = ROOT.TGraph(filtercuts[2], ArrayRho_EV, ArrayZ_EV) # make and format TGraph for Fitted events
-    ZRhoPlotEV.SetTitle("Z vs. Rho for Fitted Events; Rho [mm]; Z [mm]")
-    #ZRhoPlotEV.SetMarkerStyle(6)
-    #ZRhoPlotEV.SetMarkerColorAlpha(ROOT.kBlue, 1)
-    #ZRhoPlotEV.SetLineColorAlpha(ROOT.kBlue, 1)
-    #ZRhoPlotEV.SetFillStyle(0)
-    ZRhoPlotEV.Draw("COL")
-
-    '''
-    r = 6000 # save to file eventually
-    theta = -math.pi/2
-    x, y = array("d"), array("d")
-    for i in range(100):
-        x.append(r*math.cos(theta)), y.append(r*math.sin(theta))
-        theta += 0.0302
-    for i in range(50):
-        x.append(730), y.append(6000+i*140)
-    boundaryplot = ROOT.TGraph(150, x, y)
-    boundaryplot.SetTitle("Inner AV")
-    boundaryplot.SetLineStyle(3)
-    boundaryplot.SetMarkerStyle(0)
-    boundaryplot.SetFillStyle(0)
-    boundaryplot.Draw()
-    
-    lineplot = ROOT.TGraph(2, array("d", [0, 8000]), array("d", [747.5, 747.5])) # a line at Z = 747.5 mm to tell where scint ends
-    lineplot.SetTitle("747.5 mm")
-    lineplot.SetMarkerStyle(0)
-    lineplot.SetLineStyle(7)
-    lineplot.SetFillStyle(0)
-    lineplot.Draw()
-
-    ZRho = ROOT.TMultiGraph() # draw the graphs on a multigraph with a legend
-    ZRho.SetTitle("Z vs. Rho for Fitted Events; Rho [mm]; Z [mm]")
-    ZRho.Add(ZRhoPlotEV, "AP")
-    ZRho.Add(lineplot, "L")
-    ZRho.Add(boundaryplot, "C")
-    ZRho.Draw("A")
-    leg = canvas1.BuildLegend(0.68, 0.79, 0.9, 0.9)
-    canvas1.Update()
-    ZRho.GetYaxis().SetTitleOffset(1.36)
-    '''
-
-    latex = ROOT.TLatex() # write messages
-    latex.SetTextFont(62)
-    latex.SetNDC()
-    latex.SetTextSize(0.02)
-    xloc = 0.5
-    yloc = 0.9
-    #latex.DrawText(xloc, yloc-0.05, "%i/%i Events With Valid Pos Fit Have Valid Energy Fit"%(filtercuts[3], filtercuts[2]))
-    latex.DrawText(xloc, yloc-0.1, "%i/%i Fitted With Z < 747.5 mm"%(FitBelowCount, CountEV))
-    latex.DrawText(xloc, yloc-0.15, "%i Fitted Outside AV, %i Radius > 6 m"%(OutsideEV, outsideradius))
-    
-    canvas1.Print(outDir + outFileName) # save pdf
-    
-    print FitBelowCount, "fitted events below z = 747.5 mm" # keep track of fitted events below 747.5 mm
-    print OutsideEV, "events outside the AV"
-    print NeckCountEV, "events in the neck"
-    print filtercuts, " total fit count, retrigger filtered, posvalid, Evalid"
-    # =======================================================================
-
-
-
-def PlotDataPosHist(input_files):
-
-    """ 
-
-    Description
-    -----------
-    Plot a 2D Z vs Rho histogram for Fitted evs in data
-
-    Parameters
-    ----------
-    input_files : list of str 
-        Path to the RAT ROOT file(s) to play around with
-    
-
-    """
-
-    fitName = "partialFitter"
-    CountEV = 0
-    just_compare_neck = False
-
-    # ======================================================================= for z vs rho
-
-    ZRhoPlotEV = ROOT.TH2D("hist", "hist", 100, 0, 8000, 100, -8000, 8000)
-    ZRhoPlotEV.SetDirectory(0)
-    ZRhoPlotEV.SetStats(0)
-
-    # ======================================================================= 
-
-    FitBelowCount = 0 # keep track of fitted events below 747.5 mm
-    OutsideEV = 0
-    NeckCountEV = 0
-    outsideradius = 0
-    filtercuts = [0, 0, 0, 0] # total fit count, retrigger filtered, posvalid, Evalid
-
-    for file_name in input_files :
-
-        oldFile = ROOT.TFile(fname) 
-        oldTree_T = oldFile.Get("T")
-        #print "\n\tSuccessfully ran dsreader(", file_name, ")\n"
-
-        for ds, run in dsread:
         
-            for iev in range(0, ds.GetEVCount()): # ds is an entry, multiple EV events in one MC event possible so loop through them
-
-                filtercuts[0] += 1
-                if filtercuts[0] < 10000: continue
-                if filtercuts[0] % 1000 == 0: print "Event", filtercuts[0]
-
-                if iev > 0: # retrigger filter
-                    continue
-
-                ev = ds.GetEV(iev) # single EV event
-
-                filtercuts[1] += 1
-
-                if not ev.FitResultExists(fitName) or not ev.GetFitResult(fitName).GetVertex(0).ContainsPosition() or not ev.GetFitResult(fitName).GetVertex(0).ValidPosition() :
-                    continue # valid position filter
-
-                filtercuts[2] += 1 # keep count of valid pos fitted events
-
-                fVertex = ev.GetFitResult(fitName).GetVertex(0)     
-                    
-                PosEV = fVertex.GetPosition()                  # get position vector 
-                PosEV_Z = PosEV.Z()
-                REV = PosEV.Mag()                              # and radius
-                RhoEV = math.sqrt(PosEV.X()**2 + PosEV.Y()**2)
-
-                if PosEV_Z < 747.5 :
-                    FitBelowCount += 1
-
-                if PosEV_Z > 6000 and RhoEV < 730 :
-                    NeckCountEV += 1
-                
-                if PosEV_Z >= 6000 and RhoEV >= 730 :
-                    OutsideEV += 1
-                if PosEV_Z < 6000 and REV > 6000 :
-                    OutsideEV += 1
-                if REV > 6000 :
-                    outsideradius += 1
-
-                # plot in hist
-                ZRhoPlotEV.Fill(RhoEV, PosEV_Z)
-            
-            if filtercuts[0] >= 20000: break
 
 
 
@@ -1082,68 +911,34 @@ def PlotDataPosHist(input_files):
     canvas1 = ROOT.TCanvas("canvas1") # make canvas
     canvas1.cd()
 
-    #ZRhoPlotEV = ROOT.TGraph(filtercuts[2], ArrayRho_EV, ArrayZ_EV) # make and format TGraph for Fitted events
-    ZRhoPlotEV.SetTitle("Z vs. Rho for Fitted Events; Rho [mm]; Z [mm]")
-    #ZRhoPlotEV.SetMarkerStyle(6)
-    #ZRhoPlotEV.SetMarkerColorAlpha(ROOT.kBlue, 1)
-    #ZRhoPlotEV.SetLineColorAlpha(ROOT.kBlue, 1)
-    #ZRhoPlotEV.SetFillStyle(0)
-    ZRhoPlotEV.Draw("COL")
+    if is_mc :
+        ZRhoPlotEV.SetTitle("Z vs. Rho for BiPo214 MC")
+    else :
+        ZRhoPlotEV.SetTitle("Z vs. Rho for BiPo214 Data")
+    ZRhoPlotEV.GetYaxis().SetTitleOffset(1.2)
+    ZRhoPlotEV.GetXaxis().SetTitle("Rho [mm]")
+    ZRhoPlotEV.GetYaxis().SetTitle("Z [mm]")
 
-    '''
-    r = 6000 # save to file eventually
-    theta = -math.pi/2
-    x, y = array("d"), array("d")
-    for i in range(100):
-        x.append(r*math.cos(theta)), y.append(r*math.sin(theta))
-        theta += 0.0302
-    for i in range(50):
-        x.append(730), y.append(6000+i*140)
-    boundaryplot = ROOT.TGraph(150, x, y)
-    boundaryplot.SetTitle("Inner AV")
-    boundaryplot.SetLineStyle(3)
-    boundaryplot.SetMarkerStyle(0)
-    boundaryplot.SetFillStyle(0)
-    boundaryplot.Draw()
-    
-    lineplot = ROOT.TGraph(2, array("d", [0, 8000]), array("d", [747.5, 747.5])) # a line at Z = 747.5 mm to tell where scint ends
-    lineplot.SetTitle("747.5 mm")
-    lineplot.SetMarkerStyle(0)
-    lineplot.SetLineStyle(7)
-    lineplot.SetFillStyle(0)
-    lineplot.Draw()
+    try:
+        ZRhoPlotEV.Draw("COLZ")
+    except:
+        print "'COLZ' failed."
+        ZRhoPlotEV.Draw("COL")
 
-    ZRho = ROOT.TMultiGraph() # draw the graphs on a multigraph with a legend
-    ZRho.SetTitle("Z vs. Rho for Fitted Events; Rho [mm]; Z [mm]")
-    ZRho.Add(ZRhoPlotEV, "AP")
-    ZRho.Add(lineplot, "L")
-    ZRho.Add(boundaryplot, "C")
-    ZRho.Draw("A")
-    leg = canvas1.BuildLegend(0.68, 0.79, 0.9, 0.9)
-    canvas1.Update()
-    ZRho.GetYaxis().SetTitleOffset(1.36)
-    '''
+
 
     latex = ROOT.TLatex() # write messages
     latex.SetTextFont(62)
     latex.SetNDC()
     latex.SetTextSize(0.02)
-    xloc = 0.5
-    yloc = 0.9
-    #latex.DrawText(xloc, yloc-0.05, "%i/%i Events With Valid Pos Fit Have Valid Energy Fit"%(filtercuts[3], filtercuts[2]))
-    latex.DrawText(xloc, yloc-0.1, "%i/%i Fitted With Z < 747.5 mm"%(FitBelowCount, CountEV))
-    latex.DrawText(xloc, yloc-0.15, "%i Fitted Outside AV, %i Radius > 6 m"%(OutsideEV, outsideradius))
+    xloc = 0.75
+    yloc = 0.8
+    latex.DrawText(xloc-0.01, yloc+0.04, "Re-trigger filtered Events") 
+    latex.SetTextSize(0.015)
+    latex.DrawText(xloc, yloc, "%i Entries"%(ZRhoPlotEV.GetEntries()))
     
     canvas1.Print(outDir + outFileName) # save pdf
     
-    print FitBelowCount, "fitted events below z = 747.5 mm" # keep track of fitted events below 747.5 mm
-    print OutsideEV, "events outside the AV"
-    print NeckCountEV, "events in the neck"
     print filtercuts, " total fit count, retrigger filtered, posvalid, Evalid"
     # =======================================================================
-
-
-
-if __name__ == '__main__':
-    #globals()[sys.argv[1]](sys.argv[2])
-    PlotDataPosHist(["/home/eigenboi/scratch/root_files/data_bipo214_results_test_of_concept.root"])
+# ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

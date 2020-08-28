@@ -4,84 +4,65 @@
 # https://indico.cern.ch/event/704163/contributions/2936719/attachments/1693833/2726445/Tutorial-PyROOT.pdf
 # and Energy.C by Yang Zhang
 
+print "\n"
+
 import ROOT
 from rat import dsreader
 import sys
+import math
 
-#outDir = "/SNO+/pdfs/" # for local VM
-outDir = "/home/eigenboi/pdfs/" # for cedar
-outFileName = "example.pdf"
-
-index = 1
-
-
-
-def BiPoEnergy():
-
-    """ For finding energy of BiPo data """
-
-    input_files = ["uhhh.root"]
-    ERange = [0, 10]
-    ECut = 0.015 # already baked in to QPartialEnergy method
-    hist_display_title = "BiPo214 Energy"
-    plotTitle = outDir + outFileName
-    compare_uncleaned = True
-
-    h_energy, Counts = retriggerFilter(input_files, ERange, ECut, hist_display_title) 
-    plot_fit_energy(input_files, h_energy, compare_uncleaned, Counts, ERange, ECut, plotTitle)
-
-
-
-def retriggerFilter(input_files, ERange, ECut, hist_display_title): 
+# ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+def EHistMaker(input_files, ERange, ECut, hist_display_title, retriggerfilter): 
 
     """
 
     Description:
-    Extract data from root file(s), apply retrigger filtering, and return histogram "h_energy_name" as root file "hist_energy.root"
-    # contains commented out code to save histogram "h_energy_name" as root file "hist_energy.root"
+    Extract data from root file(s) fitted with the PartialFitter, apply cuts, and return energy histogram with name "h_energy_name" 
 
     Parameters:
-    fname - name of rat root file to process
+    input_files : list of str 
+        Name of rat root file to process
+    ERange : list of floats
+        The energy range for the histogram
+    ECut : float
+        Energy below which events are cut
+    retriggerfilter : bool 
+        Whether to only use first event in an entry
+
 
     Returns:
-    h_energy - the TH1D energy histogram
-    Counts - CountTotal, CountTrigger, CountValid, CountRadius, LowECountFiltered
-    ERange - energy range of h_energy_name [MeV]
-    ECut - arbitrary cutoff below which events are considered "low energy" [MeV]
+    h_energy : TH1D histogram
+        The energy histogram
+    Counts : list 
+        CountTotal, CountTrigger, CountValid, CountRadius, LowECountFiltered
 
     """
 
     fitName = "partialFitter"
 
-    #ERange = [0.0, 1.5]             # ERange and ECut as outputs so can use in next script too 
-    #ERange = [0, 9]
-    #ECut = 0.2                      # cutoff below which events are considered "low energy" [MeV]
-
     nbins = 100
     Counts = [0, 0, 0, 0, 0]        # CountTotal, CountTrigger, CountRadius, CountValid, LowECountFiltered
 
-    #h_energy = ROOT.TH1D("h_energy_name","Retrigger Event Filter Test", nbins, ERange[0], ERange[1])
     h_energy = ROOT.TH1D("h_energy_name", hist_display_title, nbins, ERange[0], ERange[1])
     h_energy.SetDirectory(0)
-    for fname in input_files :
-        for ds, run in dsreader(fname): # ds is equivalent to dsreader.GetEntry(i) in c++
 
-            #mc = ds.GetMC()
-            #mcparticle = mc.GetMCParticle(0)
-            #mcenergy = mcparticle.GetKineticEnergy()
+    for fname in input_files :
+
+        for ds, run in dsreader(fname): # ds is equivalent to dsreader.GetEntry(i) in c++
 
             for iev in range(0, ds.GetEVCount()):
 
                 Counts[0] += 1                                           # total event count
 
-                if iev > 0 :
+                if retriggerfilter and iev > 0 :
+                    Counts[1] += 1 
                     continue                                             # re-trigger filter
-                Counts[1] += 1                                           # events that aren't re-triggers count
+                                                            
 
                 ev = ds.GetEV(iev)
 
                 if not ev.FitResultExists(fitName) or not ev.GetFitResult(fitName).GetVertex(0).ContainsPosition() or not ev.GetFitResult(fitName).GetVertex(0).ValidPosition() :
-                    continue
+                    continue # valid position cut
 
                 fVertex = ev.GetFitResult(fitName).GetVertex(0)
                 PosEV = fVertex.GetPosition()
@@ -89,48 +70,42 @@ def retriggerFilter(input_files, ERange, ECut, hist_display_title):
                 RhoEV = math.sqrt(PosEV.X()**2 + PosEV.Y()**2)
 
                 
-                # radius cut, replaced below with inside AV cut
-                if REV > 6000 :                  # Energy.C used 5500 mm
+                # FV cut
+                if REV > 6000 or PosEV.Z() < 747.5 :                  
                     continue                                             # if outside AV, don't use
                 Counts[2] += 1                                           # inside AV count
                 
                 '''
-                # see if inside the AV
+                # see if inside the AV (including the neck)
                 if PosEV.Z() >= 6000 and RhoEV >= 730 :             
                     continue
                 if PosEV.Z() < 6000 and REV > 6000 :
                     continue
-                Counts[2] += 1                                           # inside AV count
+                Counts[2] += 1                                           
                 '''
+
                 '''  
                 if REV > 5500 : # FV cut instead will give better fit, boundary events are tricky 
                     continue
                 Counts[2] += 1   
                 '''  
 
-                if not fVertex.ValidEnergy():
-                    continue
+                if not fVertex.ValidEnergy(): continue # valid energy cut
+                finalE = fVertex.GetEnergy()
+                if finalE < ECut: continue # low energy cut
                 Counts[3] += 1                                           # how many actually pass the gauntlet
 
-                h_energy.Fill(fVertex.GetEnergy()) 
+                h_energy.Fill(finalE) 
 
                 if fVertex.GetEnergy() < ECut: 
                     Counts[4] += 1                                       # keep track of LowE which pass the filter 
 
-                #nHits = ev.GetNhits()
-                #totcharge = ev.GetTotalCharge()
-
-    # save file
-    '''
-    fileout =  ROOT.TFile("/SNO+/root_files/hist_energy_point_00.root", "RECREATE") 
-    fileout.cd()
-    h_energy.Write() 
-    fileout.Close()
-    '''
+    #h_energy.Scale(1/h_energy.GetEntries()) # scale by entries
+    
     return h_energy, Counts
+# ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-
+# ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 def plot_fit_energy(input_files, h_energy, compare_uncleaned, Counts, ERange, ECut, plotTitle):
     
     """ 
@@ -154,12 +129,10 @@ def plot_fit_energy(input_files, h_energy, compare_uncleaned, Counts, ERange, EC
     nbins = 100                                                   # for histogram formatting
     binsize = 1000*(ERange[1]-ERange[0])/nbins                    # [keV]
 
-    #histFile = ROOT.TFile.Open(file_name_0, "READ")               # read in filtered histogram
-    #h_fit_energy_0 = histFile.Get("h_energy_name")
     h_fit_energy_0 = h_energy
     h_fit_energy_0.SetDirectory(0)
     h_fit_energy_0.SetStats(0)
-    #histFile.Close()
+
     if not h_fit_energy_0 :
         print "Failed to get data histogram"
         sys.exit(1)
@@ -248,18 +221,15 @@ def plot_fit_energy(input_files, h_energy, compare_uncleaned, Counts, ERange, EC
     latex.DrawText(xloc-0.01, yloc+0.04, "Re-Trigger Filtered Data") 
     latex.SetTextSize(0.015)
     latex.DrawText(xloc, yloc, "%i Entries"%(h_fit_energy_0.GetEntries()))
-    latex.DrawText(xloc, yloc-0.04, "Mean = %.3f +/- %.4f MeV"%(fit0[2], fit0[3]))
-    latex.DrawText(xloc, yloc-0.08, "stdev = %.3f +/- %.4f"%(fit0[4], fit0[5]))
-    latex.DrawText(xloc, yloc-0.12, "chi^2/ndf = %.1f/%i"%(fit0[0], fit0[1]))
+    latex.DrawLatex(xloc, yloc-0.04, "Mean = %.3f #pm %.4f MeV"%(fit0[2], fit0[3]))
+    latex.DrawLatex(xloc, yloc-0.08, "#sigma = %.3f #pm %.4f"%(fit0[4], fit0[5]))
+    latex.DrawLatex(xloc, yloc-0.12, "#Chi^{2}/ndf = %.1f/%i"%(fit0[0], fit0[1]))
     #if compare_uncleaned :
     #    latex.DrawText(xloc-0.5, yloc+0.04, "%i-%i=%i fewer entries below %.1f MeV"%(LowECountUnfiltered,Counts[4], LowECountUnfiltered-Counts[4], ECut))
     #    latex.DrawText(xloc-0.5, yloc-0.04, "%.2f percent reduction of entries below %.1f MeV"%((100*(LowECountUnfiltered-Counts[4])/LowECountUnfiltered, ECut)))
     #    latex.DrawText(xloc-0.5, yloc, "%i-%i=%i fewer events in total."%(OriginalCountValidFit, Counts[3], OriginalCountValidFit-Counts[3]))
 
     canvas.Print(plotTitle)
-    #canvas.Print("/home/eigenboi/pdfs/tablecheck_fill_10MeV_00.pdf")
-    #canvas.Print("/home/eigenboi/pdfs/tablecheck_point_2p5MeV_02.pdf")
-    #canvas.Print("/home/eigenboi/pdfs/tablecheck_point_10MeV_AV_03.pdf")
 
     if compare_uncleaned :
         print "h_fit_energy_0.GetEntries() = ", h_fit_energy_0.GetEntries()
@@ -273,9 +243,290 @@ def plot_fit_energy(input_files, h_energy, compare_uncleaned, Counts, ERange, EC
     print "LowECountFiltered = ", Counts[4]
     
     return canvas
+# ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+# ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+def plot_dual_multiple_fit_E(h_energy_MC, h_energy_data, ERange, plotTitle):
+    
+    ''' 
+    Description:
+    2 pads, 2 peaks in each, fit both peaks in each canvas with Gaussians
+    Save as pdf
+    
+    Parameters:
+    h_energy_MC : ROOT TH1D
+        Histogram containing MC data
+    h_energy_data : ROOT TH1D
+        Histogram containing data
+    ERange : list of lists
+        structured like [[total energy range], [range of 1st MC peak], [range of 2nd MC peak], [range of 1st data peak], [range of 2nd data peak]]
+    plotTitle : str
+        What to title the output file
+
+    Returns:
+    canvas : ROOT TCanvas
+
+    '''
+
+    nbins = 100                                                   # for histogram formatting
+    binsize = 1000*(ERange[0][1]-ERange[0][0])/nbins              # [keV]
+
+    h_energy_MC.SetDirectory(0)
+    h_energy_MC.SetStats(0)
+    h_energy_data.SetDirectory(0)
+    h_energy_data.SetStats(0)
+    
+    if not h_energy_MC or not h_energy_data :
+        print "Failed to get data histogram"
+        sys.exit(1)
+
+    canvas = ROOT.TCanvas("canvas")     
+    canvas.Divide(1,2)  
+
+    # ===============================================================================================                                                  
+    canvas.cd(1)
+
+    max_bin_value_MC = h_energy_MC.GetMaximum()
+
+    h_energy_MC.SetLineColor(ROOT.kBlue)
+    h_energy_MC.GetYaxis().SetTitleOffset(1.1)
+    h_energy_MC.GetYaxis().SetTitle("Count per %.1f keV bin"%(binsize)) 
+    h_energy_MC.GetXaxis().SetTitle("Fitted energy [MeV]")
+    h_energy_MC.GetYaxis().SetRangeUser(0, max_bin_value_MC + 0.1*max_bin_value_MC)
+
+    gaussFit0MC = ROOT.TF1("gaussFit0MC", "gaus", ERange[1][0], ERange[1][1]) # temp fit with built in range
+    h_energy_MC.Fit(gaussFit0MC, "ERL") # fit Po peak                
+    fitMCtemppeakPo = []
+    fitMCtemppeakPo.append(gaussFit0MC.GetParameter(1))                                    # mean 
+    fitMCtemppeakPo.append(gaussFit0MC.GetParameter(2))                                    # stdev
+
+    gaussFit1MC = ROOT.TF1("gaussFit1MC", "gaus", ERange[2][0], ERange[2][1]) # temp fit with built in range
+    h_energy_MC.Fit(gaussFit1MC, "ERL") # fit Bi peak                
+    fitMCtemppeakBi = []
+    fitMCtemppeakBi.append(gaussFit1MC.GetParameter(1))                                    # mean 
+    fitMCtemppeakBi.append(gaussFit1MC.GetParameter(2))                                    # stdev
 
 
+    gaussFit0MC = ROOT.TF1("gaussFit0MC", "gaus", fitMCtemppeakPo[0]-2.0*fitMCtemppeakPo[1], fitMCtemppeakPo[0]+2.0*fitMCtemppeakPo[1]) # actual gaussian fit
+    h_energy_MC.Fit(gaussFit0MC, "ERL")   
+    fitMCtemppeakPo = []
+    fitMCtemppeakPo.append(gaussFit0MC.GetParameter(1))                                    # mean 
+    fitMCtemppeakPo.append(gaussFit0MC.GetParameter(2))                                    # stdev
+ 
+    gaussFit1MC = ROOT.TF1("gaussFit1MC", "gaus", fitMCtemppeakBi[0]-2.0*fitMCtemppeakBi[1], fitMCtemppeakBi[0]+2.0*fitMCtemppeakBi[1]) # actual gaussian fit
+    h_energy_MC.Fit(gaussFit1MC, "ERL")                
+    fitMCtemppeakBi = []
+    fitMCtemppeakBi.append(gaussFit1MC.GetParameter(1))                                    # mean 
+    fitMCtemppeakBi.append(gaussFit1MC.GetParameter(2))                                    # stdev
 
+
+    # last time, symmetrical 
+    gaussFit0MC = ROOT.TF1("gaussFit0MC", "gaus", fitMCtemppeakPo[0]-2.0*fitMCtemppeakPo[1], fitMCtemppeakPo[0]+2.0*fitMCtemppeakPo[1]) # actual gaussian fit
+    h_energy_MC.Fit(gaussFit0MC, "ERL")    
+ 
+    gaussFit1MC = ROOT.TF1("gaussFit1MC", "gaus", fitMCtemppeakBi[0]-2.0*fitMCtemppeakBi[1], fitMCtemppeakBi[0]+2.0*fitMCtemppeakBi[1]) # actual gaussian fit
+    h_energy_MC.Fit(gaussFit1MC, "ERL+")  
+    
+    fit0 = [] 
+    fit0.append(gaussFit0MC.GetChisquare())  # chi20       0
+    fit0.append(gaussFit0MC.GetNDF())        # ndf0        1
+    fit0.append(gaussFit0MC.GetParameter(1)) # mean0       2
+    fit0.append(gaussFit0MC.GetParError(1))  # mean0error  3
+    fit0.append(gaussFit0MC.GetParameter(2)) # sigma0      4
+    fit0.append(gaussFit0MC.GetParError(2))  # sigma0error 5
+    fit1 = [] 
+    fit1.append(gaussFit1MC.GetChisquare())  # chi20       0
+    fit1.append(gaussFit1MC.GetNDF())        # ndf0        1
+    fit1.append(gaussFit1MC.GetParameter(1)) # mean0       2
+    fit1.append(gaussFit1MC.GetParError(1))  # mean0error  3
+    fit1.append(gaussFit1MC.GetParameter(2)) # sigma0      4
+    fit1.append(gaussFit1MC.GetParError(2))  # sigma0error 5
+    
+
+    h_energy_MC.Draw()
+
+    legendMC = ROOT.TLegend(0.73, 0.73, 0.9, 0.9) 
+    legendMC.AddEntry(h_energy_MC, "Fitted BiPo MC  ")        
+    legendMC.AddEntry(gaussFit0MC, "Gaussian Fit")
+    legendMC.SetLineWidth(0)
+    legendMC.Draw("same")
+
+    latex = ROOT.TLatex()
+    latex.SetTextFont(62)
+    latex.SetNDC()
+    latex.SetTextSize(0.04)
+    xloc0 = 0.74
+    yloc0 = 0.6
+    yloc1 = 0.38
+
+    
+    latex.DrawText(xloc0-0.01, yloc0+0.04, "Peak with Mean %.2f MeV"%(fit0[2])) 
+    latex.SetTextSize(0.03)
+    latex.DrawText(xloc0, yloc0, "n = %i (Entries)"%(h_energy_MC.GetEntries()))
+    latex.DrawLatex(xloc0, yloc0-0.04, "Mean = %.3f #pm %.4f MeV"%(fit0[2], fit0[3]))
+    latex.DrawLatex(xloc0, yloc0-0.08, "#sigma = %.3f #pm %.4f"%(fit0[4], fit0[5]))
+    latex.DrawLatex(xloc0, yloc0-0.12, "#Chi^{2}n/ndf = %.1f/%i"%(fit0[0]*h_energy_MC.GetEntries(), fit0[1]))
+
+    latex.SetTextSize(0.04)
+    latex.DrawText(xloc0-0.01, yloc1, "Peak with Mean %.2f MeV"%(fit1[2])) 
+    latex.SetTextSize(0.03)
+    latex.DrawLatex(xloc0, yloc1-0.04, "Mean = %.3f #pm %.4f MeV"%(fit1[2], fit1[3]))
+    latex.DrawLatex(xloc0, yloc1-0.08, "#sigma = %.3f #pm %.4f"%(fit1[4], fit1[5]))
+    latex.DrawLatex(xloc0, yloc1-0.12, "#Chi^{2}n/ndf = %.1f/%i"%(fit1[0]*h_energy_MC.GetEntries(), fit1[1]))
+    
+    # ===============================================================================================     
+    canvas.cd(2)
+
+    max_bin_value_data = h_energy_data.GetMaximum()
+
+    h_energy_data.SetLineColor(ROOT.kGreen)
+    h_energy_data.GetYaxis().SetTitleOffset(1.1)
+    h_energy_data.GetYaxis().SetTitle("Count per %.1f keV bin"%(binsize)) 
+    h_energy_data.GetXaxis().SetTitle("Fitted energy [MeV]")
+    h_energy_data.GetYaxis().SetRangeUser(0, max_bin_value_data + 0.1*max_bin_value_data) 
+
+    
+    gaussFit0data = ROOT.TF1("gaussFit0data", "gaus", ERange[3][0], ERange[3][1]) # temp fit with hardcoded range
+    h_energy_data.Fit(gaussFit0data, "ERL") # fit Po peak                
+    fitDatatemppeakPo = []
+    fitDatatemppeakPo.append(gaussFit0data.GetParameter(1))                                    # mean 
+    fitDatatemppeakPo.append(gaussFit0data.GetParameter(2))                                    # stdev
+
+    gaussFit1data = ROOT.TF1("gaussFit1data", "gaus", ERange[4][0], ERange[4][1]) # temp fit with hard coded range
+    h_energy_data.Fit(gaussFit1data, "ERL") # fit Po peak                
+    fitDatatemppeakBi = []
+    fitDatatemppeakBi.append(gaussFit1data.GetParameter(1))                                    # mean 
+    fitDatatemppeakBi.append(gaussFit1data.GetParameter(2))                                    # stdev
+
+    gaussFit0data = ROOT.TF1("gaussFit0data", "gaus", fitDatatemppeakPo[0]-2.0*fitDatatemppeakPo[1], fitDatatemppeakPo[0]+2.0*fitDatatemppeakPo[1]) # actual gaussian fit
+    h_energy_data.Fit(gaussFit0data, "ERL")  
+    fitDatatemppeakPo = []
+    fitDatatemppeakPo.append(gaussFit0data.GetParameter(1))                                    # mean 
+    fitDatatemppeakPo.append(gaussFit0data.GetParameter(2))                                    # stdev  
+ 
+    gaussFit1data = ROOT.TF1("gaussFit1data", "gaus", fitDatatemppeakBi[0]-2.0*fitDatatemppeakBi[1], fitDatatemppeakBi[0]+2.0*fitDatatemppeakBi[1]) # actual gaussian fit
+    h_energy_data.Fit(gaussFit1data, "ERL")     
+    fitDatatemppeakBi = []
+    fitDatatemppeakBi.append(gaussFit1data.GetParameter(1))                                    # mean 
+    fitDatatemppeakBi.append(gaussFit1data.GetParameter(2))                                    # stdev
+
+
+    gaussFit0data = ROOT.TF1("gaussFit0data", "gaus", fitDatatemppeakPo[0]-2.0*fitDatatemppeakPo[1], fitDatatemppeakPo[0]+2.0*fitDatatemppeakPo[1]) # actual gaussian fit
+    h_energy_data.Fit(gaussFit0data, "ERL")    
+ 
+    gaussFit1data = ROOT.TF1("gaussFit1data", "gaus", fitDatatemppeakBi[0]-2.0*fitDatatemppeakBi[1], fitDatatemppeakBi[0]+2.0*fitDatatemppeakBi[1]) # actual gaussian fit
+    h_energy_data.Fit(gaussFit1data, "ERL+")     
+
+    
+    fit0D = [] 
+    fit0D.append(gaussFit0data.GetChisquare())  # chi20       0
+    fit0D.append(gaussFit0data.GetNDF())        # ndf0        1
+    fit0D.append(gaussFit0data.GetParameter(1)) # mean0       2
+    fit0D.append(gaussFit0data.GetParError(1))  # mean0error  3
+    fit0D.append(gaussFit0data.GetParameter(2)) # sigma0      4
+    fit0D.append(gaussFit0data.GetParError(2))  # sigma0error 5
+    fit1D = [] 
+    fit1D.append(gaussFit1data.GetChisquare())  # chi20       0
+    fit1D.append(gaussFit1data.GetNDF())        # ndf0        1
+    fit1D.append(gaussFit1data.GetParameter(1)) # mean0       2
+    fit1D.append(gaussFit1data.GetParError(1))  # mean0error  3
+    fit1D.append(gaussFit1data.GetParameter(2)) # sigma0      4
+    fit1D.append(gaussFit1data.GetParError(2))  # sigma0error 5
+    
+
+    h_energy_data.Draw()
+
+    legend = ROOT.TLegend(0.73, 0.73, 0.9, 0.9) 
+    legend.AddEntry(h_energy_data, "Fitted BiPo Data")         
+    legend.AddEntry(gaussFit0data, "Gaussian Fit")
+    legend.SetLineWidth(0)
+    legend.Draw("same")
+
+    latex = ROOT.TLatex()
+    latex.SetTextFont(62)
+    latex.SetNDC()
+    latex.SetTextSize(0.04)
+    xloc0 = 0.74
+    yloc0 = 0.6
+    yloc1 = 0.38
+    
+    latex.DrawText(xloc0-0.01, yloc0+0.04, "Peak with Mean %.2f MeV"%(fit0D[2])) 
+    latex.SetTextSize(0.03)
+    latex.DrawText(xloc0, yloc0, "n = %i (Entries)"%(h_energy_data.GetEntries()))
+    latex.DrawLatex(xloc0, yloc0-0.04, "Mean = %.3f #pm %.4f MeV"%(fit0D[2], fit0D[3]))
+    latex.DrawLatex(xloc0, yloc0-0.08, "#sigma = %.3f #pm %.4f"%(fit0D[4], fit0D[5]))
+    latex.DrawLatex(xloc0, yloc0-0.12, "#Chi^{2}n/ndf = %.1f/%i"%(fit0D[0]*h_energy_data.GetEntries(), fit0D[1]))
+
+    latex.SetTextSize(0.04)
+    latex.DrawText(xloc0-0.01, yloc1, "Peak with Mean %.2f MeV"%(fit1D[2])) 
+    latex.SetTextSize(0.03)
+    latex.DrawLatex(xloc0, yloc1-0.04, "Mean = %.3f #pm %.4f MeV"%(fit1D[2], fit1D[3]))
+    latex.DrawLatex(xloc0, yloc1-0.08, "#sigma = %.3f #pm %.4f"%(fit1D[4], fit1D[5]))
+    latex.DrawLatex(xloc0, yloc1-0.12, "#Chi^{2}n/ndf = %.1f/%i"%(fit1D[0]*h_energy_data.GetEntries(), fit1D[1]))
+    
+    # =============================================================================================== 
+
+
+    canvas.Print(plotTitle)
+
+
+    return canvas
+# ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+# ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+def plot_dual_energy(h_energy_MC, h_energy_data, ERange, plotTitle):
+    
+    """ 
+
+    plot MC and scaled BiPo data overlapping, BiPo with points
+
+    """
+
+    if not h_energy_MC or not h_energy_data :
+        print "Failed to get data histogram"
+        sys.exit(1)
+
+    nbins = 100                                                   # for histogram formatting
+    binsize = 1000*(ERange[0][1]-ERange[0][0])/nbins              # [keV]
+
+    h_energy_MC.SetDirectory(0)
+    h_energy_MC.SetStats(0)
+    h_energy_data.SetDirectory(0)
+    h_energy_data.SetStats(0)
+
+    canvas = ROOT.TCanvas("canvas")
+    canvas.cd()
+
+    h_energy_MC.SetLineColor(ROOT.kBlue)
+
+    h_energy_data.SetMarkerStyle(2)
+    h_energy_data.GetYaxis().SetTitleOffset(1.1)
+    h_energy_data.GetYaxis().SetTitle("Normalized count per %.1f keV bin"%(binsize)) 
+    h_energy_data.GetXaxis().SetTitle("Fitted energy [MeV]")
+
+    h_energy_MC.Draw()
+    h_energy_data.Draw("SAME P")
+
+    legend = ROOT.TLegend(0.75, 0.79, 0.9, 0.9) 
+    legend.AddEntry(h_energy_MC, "MC Energy") 
+    legend.AddEntry(h_energy_data, "Data Energy, Ratio Scaled") 
+    legend.SetLineWidth(0)
+    legend.Draw("same")
+
+    xloc0 = 0.44
+    latex = ROOT.TLatex()
+    latex.SetTextFont(62)
+    latex.SetNDC()
+    latex.SetTextSize(0.02)
+    latex.DrawText(xloc0-0.01, 0.68, "Data Scaled By 0.7369")#Ratio Function (2nd Order Polynomial)") 
+    
+
+    canvas.Print(outDir + plotTitle)
+
+    return canvas
+# ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+# ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 def plot_dual_fit_energy(input_files, plotTitles):
     
     """ 
@@ -287,7 +538,7 @@ def plot_dual_fit_energy(input_files, plotTitles):
     input_files : list
         Path to the RAT DS file(s) to plot.
     plotTitles : list
-        What to label the top and bottom histograms (respectively).
+        What to label the histograms.
 
     Returns - The histogram plot as a pdf
 
@@ -404,87 +655,4 @@ def plot_dual_fit_energy(input_files, plotTitles):
     canvas.Print(outDir + outFilename)
 
     return canvas
-
-
-
-def fileArr(pickedfile):
-
-    #cedar
-    
-    input_files = [['/home/eigenboi/root_files/sim_point_1MeV_AV_01.root', '/home/eigenboi/root_files/sim_point_1MeV_AV_02.root', '/home/eigenboi/root_files/sim_point_1MeV_AV_03.root', '/home/eigenboi/root_files/sim_point_1MeV_AV_04.root', '/home/eigenboi/root_files/sim_point_1MeV_AV_05.root'],
-    ['/home/eigenboi/root_files/sim_point_2p5MeV_AV_01.root', '/home/eigenboi/root_files/sim_point_2p5MeV_AV_02.root', '/home/eigenboi/root_files/sim_point_2p5MeV_AV_03.root', '/home/eigenboi/root_files/sim_point_2p5MeV_AV_04.root', '/home/eigenboi/root_files/sim_point_2p5MeV_AV_05.root'],
-    ['/home/eigenboi/root_files/sim_point_5MeV_AV_01.root', '/home/eigenboi/root_files/sim_point_5MeV_AV_02.root', '/home/eigenboi/root_files/sim_point_5MeV_AV_03.root', '/home/eigenboi/root_files/sim_point_5MeV_AV_04.root', '/home/eigenboi/root_files/sim_point_5MeV_AV_05.root'],
-    ['/home/eigenboi/root_files/sim_point_7p5MeV_AV_01.root', '/home/eigenboi/root_files/sim_point_7p5MeV_AV_02.root', '/home/eigenboi/root_files/sim_point_7p5MeV_AV_03.root', '/home/eigenboi/root_files/sim_point_7p5MeV_AV_04.root', '/home/eigenboi/root_files/sim_point_7p5MeV_AV_05.root'],
-    ['/home/eigenboi/root_files/sim_point_10MeV_AV_01.root', '/home/eigenboi/root_files/sim_point_10MeV_AV_02.root', '/home/eigenboi/root_files/sim_point_10MeV_AV_03.root', '/home/eigenboi/root_files/sim_point_10MeV_AV_04.root', '/home/eigenboi/root_files/sim_point_10MeV_AV_05.root']]
-    
-
-    #input_files = ['/home/eigenboi/root_files/sim_fill_1MeV_01_tablecheck.root', '/home/eigenboi/root_files/sim_fill_1MeV_02_tablecheck.root', '/home/eigenboi/root_files/sim_fill_1MeV_03_tablecheck.root', '/home/eigenboi/root_files/sim_fill_1MeV_04_tablecheck.root', '/home/eigenboi/root_files/sim_fill_1MeV_05_tablecheck.root']
-    #input_files = ['/home/eigenboi/root_files/sim_fill_1MeV_01_tablecheck.root', '/home/eigenboi/root_files/sim_fill_1MeV_02_tablecheck.root', '/home/eigenboi/root_files/sim_fill_1MeV_03_tablecheck.root', '/home/eigenboi/root_files/sim_fill_1MeV_05_tablecheck.root']   
-    
-    input_files_C = [['/home/eigenboi/root_files/sim_point_1MeV_01_tablecheck.root', '/home/eigenboi/root_files/sim_point_1MeV_02_tablecheck.root', '/home/eigenboi/root_files/sim_point_1MeV_03_tablecheck.root', '/home/eigenboi/root_files/sim_point_1MeV_04_tablecheck.root', '/home/eigenboi/root_files/sim_point_1MeV_05_tablecheck.root'],
-    ['/home/eigenboi/root_files/sim_point_2p5MeV_01_tablecheck.root', '/home/eigenboi/root_files/sim_point_2p5MeV_02_tablecheck.root', '/home/eigenboi/root_files/sim_point_2p5MeV_03_tablecheck.root', '/home/eigenboi/root_files/sim_point_2p5MeV_04_tablecheck.root', '/home/eigenboi/root_files/sim_point_2p5MeV_05_tablecheck.root'],
-    ['/home/eigenboi/root_files/sim_point_5MeV_01_tablecheck.root', '/home/eigenboi/root_files/sim_point_5MeV_02_tablecheck.root', '/home/eigenboi/root_files/sim_point_5MeV_03_tablecheck.root', '/home/eigenboi/root_files/sim_point_5MeV_04_tablecheck.root', '/home/eigenboi/root_files/sim_point_5MeV_05_tablecheck.root'],
-    ['/home/eigenboi/root_files/sim_point_7p5MeV_01_tablecheck.root', '/home/eigenboi/root_files/sim_point_7p5MeV_02_tablecheck.root', '/home/eigenboi/root_files/sim_point_7p5MeV_03_tablecheck.root', '/home/eigenboi/root_files/sim_point_7p5MeV_04_tablecheck.root', '/home/eigenboi/root_files/sim_point_7p5MeV_05_tablecheck.root'],
-    ['/home/eigenboi/root_files/sim_point_10MeV_01_tablecheck.root', '/home/eigenboi/root_files/sim_point_10MeV_02_tablecheck.root', '/home/eigenboi/root_files/sim_point_10MeV_03_tablecheck.root', '/home/eigenboi/root_files/sim_point_10MeV_04_tablecheck.root', '/home/eigenboi/root_files/sim_point_10MeV_05_tablecheck.root']]
-    
-    input_files_AV = [['/home/eigenboi/root_files/sim_point_1MeV_AV_01_tablecheck.root', '/home/eigenboi/root_files/sim_point_1MeV_AV_02_tablecheck.root', '/home/eigenboi/root_files/sim_point_1MeV_AV_03_tablecheck.root', '/home/eigenboi/root_files/sim_point_1MeV_AV_04_tablecheck.root', '/home/eigenboi/root_files/sim_point_1MeV_AV_05_tablecheck.root'],
-    ['/home/eigenboi/root_files/sim_point_2p5MeV_AV_01_tablecheck.root', '/home/eigenboi/root_files/sim_point_2p5MeV_AV_02_tablecheck.root', '/home/eigenboi/root_files/sim_point_2p5MeV_AV_03_tablecheck.root', '/home/eigenboi/root_files/sim_point_2p5MeV_AV_04_tablecheck.root', '/home/eigenboi/root_files/sim_point_2p5MeV_AV_05_tablecheck.root'],
-    ['/home/eigenboi/root_files/sim_point_5MeV_AV_01_tablecheck.root', '/home/eigenboi/root_files/sim_point_5MeV_AV_02_tablecheck.root', '/home/eigenboi/root_files/sim_point_5MeV_AV_03_tablecheck.root', '/home/eigenboi/root_files/sim_point_5MeV_AV_04_tablecheck.root', '/home/eigenboi/root_files/sim_point_5MeV_AV_05_tablecheck.root'],
-    ['/home/eigenboi/root_files/sim_point_7p5MeV_AV_01_tablecheck.root', '/home/eigenboi/root_files/sim_point_7p5MeV_AV_02_tablecheck.root', '/home/eigenboi/root_files/sim_point_7p5MeV_AV_03_tablecheck.root', '/home/eigenboi/root_files/sim_point_7p5MeV_AV_04_tablecheck.root', '/home/eigenboi/root_files/sim_point_7p5MeV_AV_05_tablecheck.root'],
-    ['/home/eigenboi/root_files/sim_point_10MeV_AV_01_tablecheck.root', '/home/eigenboi/root_files/sim_point_10MeV_AV_02_tablecheck.root', '/home/eigenboi/root_files/sim_point_10MeV_AV_03_tablecheck.root', '/home/eigenboi/root_files/sim_point_10MeV_AV_04_tablecheck.root', '/home/eigenboi/root_files/sim_point_10MeV_AV_05_tablecheck.root']]
-
-    input_files_fill = [["empty"],
-                        ['/home/eigenboi/root_files/sim_fill_2p5MeV_01.root', '/home/eigenboi/root_files/sim_fill_2p5MeV_02.root', '/home/eigenboi/root_files/sim_fill_2p5MeV_03.root', '/home/eigenboi/root_files/sim_fill_2p5MeV_04.root', '/home/eigenboi/root_files/sim_fill_2p5MeV_05.root'],
-                        ['/home/eigenboi/root_files/sim_fill_5MeV_01.root', '/home/eigenboi/root_files/sim_fill_5MeV_02.root', '/home/eigenboi/root_files/sim_fill_5MeV_03.root', '/home/eigenboi/root_files/sim_fill_5MeV_04.root', '/home/eigenboi/root_files/sim_fill_5MeV_05.root'],
-                        ['/home/eigenboi/root_files/sim_fill_7p5MeV_01.root', '/home/eigenboi/root_files/sim_fill_7p5MeV_02.root', '/home/eigenboi/root_files/sim_fill_7p5MeV_03.root', '/home/eigenboi/root_files/sim_fill_7p5MeV_04.root'],
-                        ['/home/eigenboi/root_files/sim_fill_10MeV_03.root', '/home/eigenboi/root_files/sim_fill_10MeV_04.root', '/home/eigenboi/root_files/sim_fill_10MeV_05.root']]
-
-    input_files_fill2 = [["empty"],
-                        ['/home/eigenboi/root_files/sim_fill_2p5MeV_21.root', '/home/eigenboi/root_files/sim_fill_2p5MeV_22.root', '/home/eigenboi/root_files/sim_fill_2p5MeV_23.root', '/home/eigenboi/root_files/sim_fill_2p5MeV_24.root', '/home/eigenboi/root_files/sim_fill_2p5MeV_25.root'],
-                        ['/home/eigenboi/root_files/sim_fill_5MeV_24.root', '/home/eigenboi/root_files/sim_fill_5MeV_25.root'],
-                        ['/home/eigenboi/root_files/sim_fill_7p5MeV_22.root', '/home/eigenboi/root_files/sim_fill_7p5MeV_23.root', '/home/eigenboi/root_files/sim_fill_7p5MeV_24.root', '/home/eigenboi/root_files/sim_fill_7p5MeV_25.root'],
-                        ['/home/eigenboi/root_files/sim_fill_10MeV_21.root', '/home/eigenboi/root_files/sim_fill_10MeV_22.root', '/home/eigenboi/root_files/sim_fill_10MeV_23.root', '/home/eigenboi/root_files/sim_fill_10MeV_24.root', '/home/eigenboi/root_files/sim_fill_10MeV_25.root']]
-
-
-    input_files_fill_T = [["empty"],
-                        ['/home/eigenboi/scratch/root_files/sim_fill_2p5MeV_01_tablecheck.root', '/home/eigenboi/scratch/root_files/sim_fill_2p5MeV_02_tablecheck.root', '/home/eigenboi/scratch/root_files/sim_fill_2p5MeV_03_tablecheck.root', '/home/eigenboi/scratch/root_files/sim_fill_2p5MeV_04_tablecheck.root', '/home/eigenboi/scratch/root_files/sim_fill_2p5MeV_05_tablecheck.root'],
-                        ['/home/eigenboi/root_files/sim_fill_5MeV_01_tablecheck.root', '/home/eigenboi/root_files/sim_fill_5MeV_02_tablecheck.root', '/home/eigenboi/root_files/sim_fill_5MeV_03_tablecheck.root', '/home/eigenboi/root_files/sim_fill_5MeV_04_tablecheck.root', '/home/eigenboi/root_files/sim_fill_5MeV_05_tablecheck.root'],
-                        ['/home/eigenboi/root_files/sim_fill_7p5MeV_01_tablecheck.root', '/home/eigenboi/root_files/sim_fill_7p5MeV_03_tablecheck.root', '/home/eigenboi/root_files/sim_fill_7p5MeV_04_tablecheck.root', '/home/eigenboi/root_files/sim_fill_7p5MeV_05_tablecheck.root'],
-                        ['/home/eigenboi/root_files/sim_fill_10MeV_01_tablecheck.root', '/home/eigenboi/root_files/sim_fill_10MeV_02_tablecheck.root', '/home/eigenboi/root_files/sim_fill_10MeV_03_tablecheck.root', '/home/eigenboi/root_files/sim_fill_10MeV_04_tablecheck.root', '/home/eigenboi/root_files/sim_fill_10MeV_05_tablecheck.root']]
-
-    input_files_fill_T2 = [["N/A"],
-                        ['/home/eigenboi/scratch/root_files/sim_fill_2p5MeV_01_newtablecheck.root', '/home/eigenboi/scratch/root_files/sim_fill_2p5MeV_02_newtablecheck.root', '/home/eigenboi/scratch/root_files/sim_fill_2p5MeV_03_newtablecheck.root', '/home/eigenboi/scratch/root_files/sim_fill_2p5MeV_04_newtablecheck.root', '/home/eigenboi/scratch/root_files/sim_fill_2p5MeV_05_newtablecheck.root'],
-                        ['/home/eigenboi/scratch/root_files/sim_fill_5MeV_01_newtablecheck.root', '/home/eigenboi/scratch/root_files/sim_fill_5MeV_02_newtablecheck.root', '/home/eigenboi/scratch/root_files/sim_fill_5MeV_03_newtablecheck.root', '/home/eigenboi/scratch/root_files/sim_fill_5MeV_04_newtablecheck.root', '/home/eigenboi/scratch/root_files/sim_fill_5MeV_05_newtablecheck.root'],
-                        ['/home/eigenboi/scratch/root_files/sim_fill_7p5MeV_01_newtablecheck.root', '/home/eigenboi/scratch/root_files/sim_fill_7p5MeV_02_newtablecheck.root', '/home/eigenboi/scratch/root_files/sim_fill_7p5MeV_03_newtablecheck.root', '/home/eigenboi/scratch/root_files/sim_fill_7p5MeV_04_newtablecheck.root', '/home/eigenboi/scratch/root_files/sim_fill_7p5MeV_05_newtablecheck.root'],
-                        ['/home/eigenboi/scratch/root_files/sim_fill_10MeV_01_newtablecheck.root', '/home/eigenboi/scratch/root_files/sim_fill_10MeV_02_newtablecheck.root', '/home/eigenboi/scratch/root_files/sim_fill_10MeV_03_newtablecheck.root', '/home/eigenboi/scratch/root_files/sim_fill_10MeV_04_newtablecheck.root', '/home/eigenboi/scratch/root_files/sim_fill_10MeV_05_newtablecheck.root']]
-
-    filedict = {0:input_files, 1:input_files_C, 2:input_files_AV, 3:input_files_fill, 4:input_files_fill2, 5:input_files_fill_T, 6:input_files_fill_T2}
-
-    return filedict[pickedfile]
-
-
-
-def CompERanges():
-
-    """ Useful for comparing the energy of a single configuaration of RAT over an energy range 0f 1MeV, 2.5MeV, 5MeV, 7.5MeV, 10MeV """
-
-    input_files = fileArr(6)[index] # just change index to get each energy of a series of runs
-    ERange = [[0.0, 1.5], [0, 4], [0, 8], [0, 11], [0, 14]]
-    ERange = ERange[index]
-    ECut = 0.2
-
-    hist_display_title = ["1 MeV Fill Dist. Energy Fit", "2.5 MeV Fill Dist. Energy Fit", "5 MeV Fill Dist. Energy Fit", "7.5 MeV Fill Dist. Energy Fit", "10 MeV Fill Dist. Energy Fit"]
-    #hist_display_title = ["1 MeV Point Dist. Energy Fit", "2.5 MeV Point Dist. Energy Fit, (rho=0m)", "5 MeV Point Dist. Energy Fit", "7.5 MeV Point Dist. Energy Fit", "10 MeV Point Dist. Energy Fit"]
-
-    #plotTitle = ["/home/eigenboi/pdfs/fill_1MeV_01.pdf",  "/home/eigenboi/pdfs/fill_2p5MeV_03.pdf", "/home/eigenboi/pdfs/fill_5MeV_03.pdf", "/home/eigenboi/pdfs/fill_7p5MeV_03.pdf",  "/home/eigenboi/pdfs/fill_10MeV_03.pdf"]
-    plotTitle = [outDir+"fill_1MeV_04.pdf",  outDir+"fill_2p5MeV_05.pdf", outDir+"fill_5MeV_04.pdf", outDir+"fill_7p5MeV_04.pdf", outDir+"fill_10MeV_04.pdf"]
-
-    compare_uncleaned = True
-    h_energy, Counts = retriggerFilter(input_files, ERange, ECut, hist_display_title[index]) 
-    plot_fit_energy(input_files, h_energy, compare_uncleaned, Counts, ERange, ECut, plotTitle[index])
-
-
-
-if __name__ == '__main__':
-
-    pass
+# ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
